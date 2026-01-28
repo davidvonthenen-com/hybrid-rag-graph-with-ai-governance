@@ -2,7 +2,7 @@
 
 Retrieval-Augmented Generation (RAG) has become a critical pattern for grounding Large Language Model (LLM) responses in real-world data, improving both accuracy and reliability. Yet, conventional RAG implementations often default to vector-only databases, which come with drawbacks: weaker precision for exact facts, opaque ranking logic, and challenges with regulatory compliance.
 
-![Enterprise Hybrid RAG](./images/enterprise_deployment.png)
+![Enterprise Hybrid RAG](./images/enterprise-deployment-graph.png)
 
 This enterprise architecture uses a **Hybrid RAG** design that blends:
 

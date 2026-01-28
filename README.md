@@ -10,7 +10,7 @@ This repo implements a **Hybrid RAG Using Graph** pattern where:
 
 The Graph + Vector Hybrid RAG methodology is based on the Hybrid RAG approach described in *"Hybrid RAG: Integrating Knowledge Graphs and Vector Retrieval Augmented Generation for Efficient Information Extraction"* ([arXiv:2408.04948](https://arxiv.org/abs/2408.04948)). The strongest public signal that this hybrid approach works at scale comes from this BlackRock and NVIDIA’s HybridRAG research paper. They pair graph traversals for grounded evidence with vector recall as a fallback, and report 96% factual faithfulness on answers.
 
-![Hybrid RAG with Graph Truth Grounding](./images/rag-hybrid-graphrag.png)
+![Hybrid RAG with Graph Truth Grounding](./images/rag-hybrid-graph.png)
 
 By storing truth as **entities and relationships with metadata** (instead of relying on lexical ranking alone), the system gains stronger provenance, reduces hallucinations, and supports demanding audit requirements. 
 
