@@ -151,6 +151,20 @@ To launch the packaged NER endpoint (default `http://127.0.0.1:8000/ner`) to ext
 python ner_service.py
 ```
 
+### Start the LLM and RAG REST Servers
+
+The hybrid RAG server (`query.py`) expects an OpenAI-compatible LLM endpoint. For a fully local setup, first launch the bundled llama.cpp server and then start the RAG REST API.
+
+```bash
+# OpenAI-compatible LLM server for local llama.cpp
+python llm_server.py
+
+# OpenAI-compatible hybrid RAG server (uses the LLM server above)
+python query.py
+```
+
+If you would rather use an external LLM, set `USE_EXTERNAL_AI=true` along with the `EXTERNAL_LLM_*` environment variables, and then start only the RAG server. This keeps `llm_server.py` optional while preserving the local-only path.
+
 ## Background on the Data
 
 Our knowledge source is a collection of BBC news articles in text format, which can be found in the zip file [bbc-example.zip](https://drive.google.com/file/d/11G0v2IJTbbq_ZNiNsSpZmVIgPd1WEAsg/view?usp=drive_link) ([Mirror](https://drive.google.com/file/d/11G0v2IJTbbq_ZNiNsSpZmVIgPd1WEAsg/view?usp=drive_link)). This zip file contains a subset of 300 BBC news articles from the 2225 articles in the [BBC Full Text Document Classification](https://bit.ly/4hBKNjp) dataset. After unzipping the archive, the directory structure will look like:
