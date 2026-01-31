@@ -67,21 +67,24 @@ class Settings:
     # ---------------------------------------------------------------------
 
     # LONG store (vetted / read-mostly)
-    neo4j_long_uri: str = "bolt://127.0.0.1:7687"
+    neo4j_long_uri: str = "bolt://127.0.0.1:7688"
     neo4j_long_user: str = "neo4j"
-    neo4j_long_password: str = ""
+    neo4j_long_password: str = "neo4jneo4j1"
     neo4j_long_database: str = "neo4j"
 
     # HOT store (unvetted / user data). Default to the same instance.
-    neo4j_hot_uri: str = "bolt://127.0.0.1:7687"
+    neo4j_hot_uri: str = "bolt://127.0.0.1:7689"
     neo4j_hot_user: str = "neo4j"
-    neo4j_hot_password: str = ""
+    neo4j_hot_password: str = "neo4jneo4j2"
     neo4j_hot_database: str = "neo4j"
 
     # OpenSearch (vector store)
     opensearch_host: str = "127.0.0.1"
-    opensearch_port: int = 9201
+    opensearch_port: int = 9200
     opensearch_vector_index: str = "bbc-vector-chunks"
+    opensearch_user: str = ""
+    opensearch_password: str = ""
+    opensearch_ssl: bool = False
 
     # Retrieval / ranking parameters
     # search_size: int = 10                      # candidate docs per store
@@ -104,7 +107,7 @@ class Settings:
     llama_n_ubatch: Optional[int] = 256      # physical micro-batch; None to let llama.cpp choose
     llama_low_vram: bool = True              # reduce Metal VRAM usage
 
-    # LLM server (OpenAI-compatible REST endpoint)
+    # External LLM (OpenAI-compatible endpoint). Used when USE_EXTERNAL_AI=true.
     llm_server_url: str = "http://127.0.0.1:8001/v1"
     llm_server_api_key: str = "local-llm"
     llm_server_model: str = "local-llm"
@@ -155,47 +158,9 @@ def load_settings() -> Settings:
         opensearch_host=os.getenv("OPENSEARCH_HOST", Settings.opensearch_host),
         opensearch_port=_get_int("OPENSEARCH_PORT", Settings.opensearch_port),
         opensearch_vector_index=os.getenv("OPENSEARCH_VECTOR_INDEX", Settings.opensearch_vector_index),
-
-        # Lexical / ranking OpenSearch stores
-        opensearch_full_index=os.getenv(
-            "OPENSEARCH_FULL_INDEX", Settings.opensearch_full_index
-        ),
-        opensearch_long_host=os.getenv(
-            "OPENSEARCH_LONG_HOST", Settings.opensearch_long_host
-        ),
-        opensearch_long_port=_get_int(
-            "OPENSEARCH_LONG_PORT", Settings.opensearch_long_port
-        ),
-        opensearch_long_index=os.getenv(
-            "OPENSEARCH_LONG_INDEX", Settings.opensearch_long_index
-        ),
-        opensearch_long_user=os.getenv(
-            "OPENSEARCH_LONG_USER", Settings.opensearch_long_user
-        ),
-        opensearch_long_password=os.getenv(
-            "OPENSEARCH_LONG_PASS", Settings.opensearch_long_password
-        ),
-        opensearch_long_ssl=_get_bool(
-            "OPENSEARCH_LONG_SSL", Settings.opensearch_long_ssl
-        ),
-        opensearch_hot_host=os.getenv(
-            "OPENSEARCH_HOT_HOST", Settings.opensearch_hot_host
-        ),
-        opensearch_hot_port=_get_int(
-            "OPENSEARCH_HOT_PORT", Settings.opensearch_hot_port
-        ),
-        opensearch_hot_index=os.getenv(
-            "OPENSEARCH_HOT_INDEX", Settings.opensearch_hot_index
-        ),
-        opensearch_hot_user=os.getenv(
-            "OPENSEARCH_HOT_USER", Settings.opensearch_hot_user
-        ),
-        opensearch_hot_password=os.getenv(
-            "OPENSEARCH_HOT_PASS", Settings.opensearch_hot_password
-        ),
-        opensearch_hot_ssl=_get_bool(
-            "OPENSEARCH_HOT_SSL", Settings.opensearch_hot_ssl
-        ),
+        opensearch_user=os.getenv("OPENSEARCH_USER", Settings.opensearch_user),
+        opensearch_password=os.getenv("OPENSEARCH_PASS", Settings.opensearch_password),
+        opensearch_ssl=_get_bool("OPENSEARCH_SSL", Settings.opensearch_ssl),
 
         # Embeddings
         embedding_model=os.getenv("EMBEDDING_MODEL", Settings.embedding_model),
@@ -212,7 +177,7 @@ def load_settings() -> Settings:
         llama_n_ubatch=_get_int("LLAMA_N_UBATCH", Settings.llama_n_ubatch or 0) or None,
         llama_low_vram=_get_bool("LLAMA_LOW_VRAM", Settings.llama_low_vram),
 
-        # LLM server (OpenAI-compatible REST)
+        # External LLM (OpenAI-compatible endpoint)
         llm_server_url=llm_server_url,
         llm_server_api_key=llm_server_api_key,
         llm_server_model=llm_server_model,

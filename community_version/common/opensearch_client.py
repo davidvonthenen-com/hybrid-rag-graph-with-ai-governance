@@ -73,54 +73,12 @@ def create_vector_client(settings: Optional[Settings] = None) -> Tuple[MyOpenSea
     client = _build_client(
         host=settings.opensearch_host,
         port=settings.opensearch_port,
-        user=settings.opensearch_long_user or None,
-        password=settings.opensearch_long_password or None,
-        ssl=bool(settings.opensearch_long_ssl),
+        user=settings.opensearch_user or None,
+        password=settings.opensearch_password or None,
+        ssl=bool(settings.opensearch_ssl),
         settings=settings,
     )
     return client, settings.opensearch_vector_index
-
-
-def create_long_client(settings: Optional[Settings] = None) -> Tuple[MyOpenSearch, str]:
-    """Create an OpenSearch client for the LONG lexical index."""
-    if not settings:
-        settings = load_settings()
-    LOGGER.info(
-        "Connecting to OpenSearch LONG at %s:%s (index=%s)",
-        settings.opensearch_long_host,
-        settings.opensearch_long_port,
-        settings.opensearch_long_index,
-    )
-    client = _build_client(
-        host=settings.opensearch_long_host,
-        port=settings.opensearch_long_port,
-        user=settings.opensearch_long_user or None,
-        password=settings.opensearch_long_password or None,
-        ssl=bool(settings.opensearch_long_ssl),
-        settings=settings,
-    )
-    return client, settings.opensearch_long_index
-
-
-def create_hot_client(settings: Optional[Settings] = None) -> Tuple[MyOpenSearch, str]:
-    """Create an OpenSearch client for the HOT lexical index."""
-    if not settings:
-        settings = load_settings()
-    LOGGER.info(
-        "Connecting to OpenSearch HOT at %s:%s (index=%s)",
-        settings.opensearch_hot_host,
-        settings.opensearch_hot_port,
-        settings.opensearch_hot_index,
-    )
-    client = _build_client(
-        host=settings.opensearch_hot_host,
-        port=settings.opensearch_hot_port,
-        user=settings.opensearch_hot_user or None,
-        password=settings.opensearch_hot_password or None,
-        ssl=bool(settings.opensearch_hot_ssl),
-        settings=settings,
-    )
-    return client, settings.opensearch_hot_index
 
 
 # ---------------------------------------------------------------------------
