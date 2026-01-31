@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Hybrid RAG query runner and OpenAI-compatible REST server.
+"""Hybrid RAG query runner (Graph grounding + vector semantic support).
 
 Replaces BM25 grounding with a Neo4j Knowledge Graph while keeping the
 vector embedding retrieval unchanged.
@@ -26,14 +26,11 @@ and/or saved as JSONL (--save-results) for auditability.
 from __future__ import annotations
 
 import argparse
-import atexit
 import json
 import re
 import time
-import uuid
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 
-from flask import Flask, jsonify, request
 from openai import OpenAI
 
 from common.config import load_settings
@@ -54,176 +51,6 @@ from common.opensearch_client import create_vector_client
 
 
 LOGGER = get_logger(__name__)
-
-
-def _error(status: int, message: str) -> tuple[Dict[str, Any], int]:
-    """Return a JSON API error payload."""
-
-    return {"error": {"message": message, "type": "invalid_request_error"}}, status
-
-
-def _normalize_messages(payload: Dict[str, Any]) -> List[Dict[str, str]]:
-    """Validate and normalize chat messages from the request body."""
-
-    messages = payload.get("messages")
-    if not isinstance(messages, list) or not messages:
-        raise ValueError("Expected non-empty 'messages' list.")
-    normalized: List[Dict[str, str]] = []
-    for item in messages:
-        if not isinstance(item, dict):
-            raise ValueError("Each message must be a JSON object.")
-        role = item.get("role")
-        content = item.get("content")
-        if not isinstance(role, str) or not isinstance(content, str):
-            raise ValueError("Each message requires string 'role' and 'content'.")
-        normalized.append({"role": role, "content": content})
-    return normalized
-
-
-def _extract_question(messages: List[Dict[str, str]]) -> str:
-    """Extract the user question from a chat message list."""
-
-    for msg in reversed(messages):
-        if msg.get("role") == "user":
-            return msg.get("content", "").strip()
-    raise ValueError("No user message found in the chat payload.")
-
-
-def _build_chat_response(
-    *,
-    model: str,
-    content: str,
-    usage: Optional[Dict[str, Any]],
-) -> Dict[str, Any]:
-    """Format the response payload to match the OpenAI chat completion schema."""
-
-    payload: Dict[str, Any] = {
-        "id": f"chatcmpl-{uuid.uuid4().hex}",
-        "object": "chat.completion",
-        "created": int(time.time()),
-        "model": model,
-        "choices": [
-            {
-                "index": 0,
-                "message": {"role": "assistant", "content": content},
-                "finish_reason": "stop",
-            }
-        ],
-    }
-    if usage:
-        payload["usage"] = {
-            "prompt_tokens": int(usage.get("prompt_tokens", 0)),
-            "completion_tokens": int(usage.get("completion_tokens", 0)),
-            "total_tokens": int(usage.get("total_tokens", 0)),
-        }
-    return payload
-
-
-def _build_server_args(payload: Dict[str, Any]) -> argparse.Namespace:
-    """Create a query args namespace using defaults with optional overrides."""
-
-    args = parse_args([])
-    args.temperature = float(payload.get("temperature", args.temperature))
-    args.top_p = float(payload.get("top_p", args.top_p))
-    if "top_k" in payload:
-        args.top_k = int(payload["top_k"])
-    if "graph_k" in payload:
-        args.graph_k = int(payload["graph_k"])
-    if "bm25_k" in payload:
-        args.bm25_k = int(payload["bm25_k"])
-    if "vec_k" in payload:
-        args.vec_k = int(payload["vec_k"])
-    if "graph_doc_k" in payload:
-        args.graph_doc_k = int(payload["graph_doc_k"])
-    if "neighbor_window" in payload:
-        args.neighbor_window = int(payload["neighbor_window"])
-    if "vec_filter" in payload:
-        args.vec_filter = str(payload["vec_filter"])
-    if "observability" in payload:
-        args.observability = bool(payload["observability"])
-    return args
-
-
-def create_app() -> Flask:
-    """Create the Flask app that serves OpenAI-compatible endpoints."""
-
-    app = Flask(__name__)
-    settings = load_settings()
-
-    graph_hot = create_graph_hot_client()
-    graph_long = create_graph_long_client()
-    vec_client, _ = create_vector_client()
-    llm = load_llm(settings)
-
-    @app.route("/health", methods=["GET"])
-    def health() -> tuple[Dict[str, Any], int]:
-        return jsonify(
-            {
-                "status": "ok",
-                "model": settings.llm_server_model,
-                "server": {
-                    "host": settings.server_host,
-                    "port": settings.server_port,
-                },
-            }
-        ), 200
-
-    @app.route("/v1/models", methods=["GET"])
-    def models() -> tuple[Dict[str, Any], int]:
-        return jsonify(
-            {
-                "object": "list",
-                "data": [
-                    {
-                        "id": settings.llm_server_model,
-                        "object": "model",
-                        "created": int(time.time()),
-                        "owned_by": "local",
-                    }
-                ],
-            }
-        ), 200
-
-    @app.route("/v1/chat/completions", methods=["POST"])
-    def chat_completions() -> tuple[Dict[str, Any], int]:
-        payload = request.get_json(silent=True)
-        if not isinstance(payload, dict):
-            return _error(400, "Expected JSON object payload.")
-
-        if payload.get("stream") is True:
-            return _error(400, "Streaming responses are not supported.")
-
-        try:
-            messages = _normalize_messages(payload)
-            question = _extract_question(messages)
-        except ValueError as exc:
-            return _error(400, str(exc))
-
-        args = _build_server_args(payload)
-        model = str(payload.get("model") or settings.llm_server_model)
-
-        try:
-            answer, _ = run_one(
-                question,
-                graph_hot=graph_hot,
-                graph_long=graph_long,
-                vec_client=vec_client,
-                llm=llm,
-                args=args,
-            )
-        except Exception as exc:
-            LOGGER.exception("Failed to run RAG query.")
-            return _error(500, str(exc))
-
-        return jsonify(_build_chat_response(model=model, content=answer, usage=None)), 200
-
-    def _close_clients() -> None:
-        graph_hot.close()
-        graph_long.close()
-
-    atexit.register(_close_clients)
-
-    return app
 
 
 # Citations are expected to be inserted inline in the answer as tags like:
@@ -608,11 +435,19 @@ def run_queries(questions: List[str], *, args: argparse.Namespace) -> None:
 
 
 def main(argv: Sequence[str] | None = None) -> None:
-    """Run the OpenAI-compatible REST server for hybrid RAG."""
+    args = parse_args(argv)
 
-    app = create_app()
-    settings = load_settings()
-    app.run(host=settings.server_host, port=settings.server_port, debug=False)
+    questions: List[str]
+    if args.question:
+        questions = [args.question]
+    else:
+        # Keep default examples neutral to avoid injecting unrelated entities.
+        questions = [
+            "How much did Google purchase Windsurf for?",
+            "How much did OpenAI purchase Windsurf for?",
+        ]
+
+    run_queries(questions, args=args)
 
 
 if __name__ == "__main__":
