@@ -10,6 +10,7 @@ from typing import Optional
 from dotenv import load_dotenv
 
 
+
 def _get_str(name: str, default_val: str) -> str:
     """Return an environment variable or ``default_val`` if unset."""
 
@@ -99,8 +100,8 @@ class Settings:
     # Llama.cpp
     # llama_model_path: str = "neural-chat-7b-v3-3.Q4_K_M.gguf"
     llama_model_path: str = "Qwen2.5-7B-Instruct-1M-Q5_K_M.gguf"
-    # llama_ctx: int = 32768                  # "neural-chat = 32768, Qwen = 65536/1010000
-    llama_ctx: int = 65536                  # "neural-chat = 32768, Qwen = 65536/1010000
+    # llama_ctx: int = 32768                  # "neural-chat = 32768, Qwen = 65536/101000
+    llama_ctx: int = 65536                  # "neural-chat = 32768, Qwen = 65536/101000
     llama_n_threads: int = max(1, (os.cpu_count() or 4) - 1)
     llama_n_gpu_layers: int = 20             # -1 offloads all layers when GPU backend is available
     llama_n_batch: int = 256                 # prompt processing batch
@@ -140,7 +141,7 @@ def load_settings() -> Settings:
         llm_server_model=os.getenv("EXTERNAL_LLM_MODEL", Settings.external_model)
     llama_ctx=_get_int("LLAMA_CTX", Settings.llama_ctx)
     if external_ai:
-        llama_ctx=os.getenv("EXTERNAL_LLM_MAX_TOKENS", 65536)
+        llama_ctx=os.getenv("EXTERNAL_LLM_MAX_TOKENS", 131072)
 
     return Settings(
         # Neo4j (graph grounding)

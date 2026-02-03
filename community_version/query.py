@@ -30,6 +30,7 @@ import json
 import re
 import time
 from typing import Any, Dict, List, Optional, Sequence, Tuple
+import warnings
 
 from openai import OpenAI
 
@@ -48,6 +49,10 @@ from common.models import RetrievalHit
 from common.named_entity import extract_entities
 from common.neo4j_client import create_graph_hot_client, create_graph_long_client, MyNeo4j
 from common.opensearch_client import create_vector_client
+
+
+warnings.filterwarnings("ignore", category=FutureWarning)
+warnings.filterwarnings("ignore", category=UserWarning)
 
 
 LOGGER = get_logger(__name__)

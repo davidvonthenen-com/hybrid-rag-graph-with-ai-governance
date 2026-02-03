@@ -140,6 +140,49 @@ def _fulltext_index_exists(client: MyNeo4j, name: str) -> bool:
 # --------------------------------------------------------------------------------------
 
 
+def _graph_store_has_any_documents(
+    graph_client: MyNeo4j,
+    *,
+    store: str,
+    observability: bool,
+) -> Tuple[bool, Dict[str, Any], List[Dict[str, Any]]]:
+    """Fast-ish existence check that produces *no* Neo4j token warnings.
+
+    Why this exists:
+    Neo4j emits `UnknownLabel/UnknownProperty/UnknownRelationshipType` notifications
+    when you run tokenized Cypher (e.g., `:Document`, `e.name`, `[:MENTIONS]`) against
+    an *empty* database (no token store entries yet).
+
+    This check avoids tokenized labels/types/property access entirely by:
+      * matching any node
+      * filtering by `labels(n)`
+      * using dynamic property access `n['store']`
+
+    Returns:
+        (has_docs, query_obj, raw_records)
+    """
+
+    cypher = (
+        "MATCH (d) "
+        "WHERE 'Document' IN labels(d) "
+        "  AND coalesce(properties(d)[$store_prop], '') = $store "
+        "RETURN 1 AS ok "
+        "LIMIT 1"
+    )
+    params = {"store": store, "store_prop": "store"}
+    query_obj = {"cypher": cypher, "params": params}
+
+    if observability:
+        print("\n[GRAPH_PREFLIGHT_QUERY]\n" + json.dumps(query_obj, ensure_ascii=False, indent=2, sort_keys=True))
+
+    try:
+        recs = graph_client.run(cypher, params, readonly=True)
+    except Exception:
+        recs = []
+
+    return bool(recs), query_obj, recs
+
+
 def _store_key(client: MyNeo4j) -> str:
     return (client.store_label or "").strip().lower() or "long"
 
@@ -164,6 +207,20 @@ def graph_retrieve_doc_anchors(
         # Without entities, graph-only retrieval is ambiguous. Keep anchors empty
         # and let the orchestration decide whether to fall back.
         return [], {"cypher": "", "params": {}}, []
+
+    has_docs, preflight_q, preflight_raw = _graph_store_has_any_documents(
+        graph_client,
+        store=store,
+        observability=observability,
+    )
+    if not has_docs:
+        # Avoid running tokenized Cypher against an empty database which causes
+        # Neo4j to emit noisy `Unknown*` notifications.
+        if observability:
+            print(f"[GRAPH_PREFLIGHT] store='{store}' -> EMPTY (skipping anchor retrieval)")
+        preflight_q = dict(preflight_q)
+        preflight_q.update({"skipped": True, "reason": "graph store has no Document nodes"})
+        return [], preflight_q, preflight_raw
 
     cypher = (
         "MATCH (d:Document {store: $store})-[:HAS_CHUNK]->(c:Chunk)-[:MENTIONS]->(e:Entity) "
@@ -223,6 +280,20 @@ def graph_retrieve_chunks(
 
     if not entities:
         return [], {"cypher": "", "params": {}}, []
+
+    has_docs, preflight_q, preflight_raw = _graph_store_has_any_documents(
+        graph_client,
+        store=store,
+        observability=observability,
+    )
+    if not has_docs:
+        # Avoid running tokenized Cypher against an empty database which causes
+        # Neo4j to emit noisy `Unknown*` notifications.
+        if observability:
+            print(f"[GRAPH_PREFLIGHT] store='{store}' -> EMPTY (skipping chunk retrieval)")
+        preflight_q = dict(preflight_q)
+        preflight_q.update({"skipped": True, "reason": "graph store has no Document nodes"})
+        return [], preflight_q, preflight_raw
 
     cypher = (
         "MATCH (d:Document {store: $store})-[:HAS_CHUNK]->(c:Chunk)-[:MENTIONS]->(e:Entity) "
