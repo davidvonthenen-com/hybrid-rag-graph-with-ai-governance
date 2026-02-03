@@ -275,6 +275,45 @@ def build_vector_chunks(
     return chunks
 
 
+def build_graph_chunk_texts(
+    paragraphs: Iterable[str],
+    *,
+    strategy: str,
+    chunk_size: int,
+    chunk_overlap: int,
+) -> List[str]:
+    """Create graph chunk text based on the selected strategy.
+
+    Args:
+        paragraphs: Paragraphs from the source document.
+        strategy: Chunking strategy ("fixed" or "paragraph").
+        chunk_size: Maximum size (in characters) of each chunk when using fixed chunking.
+        chunk_overlap: Number of characters to overlap between consecutive chunks when using fixed chunking.
+
+    Returns:
+        A list of chunk strings to ingest into the graph.
+
+    Raises:
+        ValueError: If an unsupported chunking strategy is provided.
+    """
+
+    cleaned_paragraphs = [p.strip() for p in paragraphs if p.strip()]
+    if not cleaned_paragraphs:
+        return []
+
+    if strategy == "fixed":
+        return build_vector_chunks(
+            cleaned_paragraphs,
+            chunk_size=chunk_size,
+            chunk_overlap=chunk_overlap,
+        )
+
+    if strategy == "paragraph":
+        return cleaned_paragraphs
+
+    raise ValueError(f"Unsupported graph chunking strategy: {strategy}")
+
+
 # ---------------------------------------------------------------------------
 # Ingestion logic
 # ---------------------------------------------------------------------------
@@ -381,14 +420,12 @@ def ingest_hybrid(
             rel_path = fp.relative_to(data_dir).as_posix()
 
             paragraphs = split_into_paragraphs(text)
-            if graph_chunking == "fixed":
-                graph_chunk_texts = build_vector_chunks(
-                    paragraphs,
-                    chunk_size=graph_chunk_size,
-                    chunk_overlap=graph_chunk_overlap,
-                )
-            else:
-                graph_chunk_texts = paragraphs
+            graph_chunk_texts = build_graph_chunk_texts(
+                paragraphs,
+                strategy=graph_chunking,
+                chunk_size=graph_chunk_size,
+                chunk_overlap=graph_chunk_overlap,
+            )
 
             # 1) Graph ingestion (truth grounding)
             for cli, store_key in targets:
