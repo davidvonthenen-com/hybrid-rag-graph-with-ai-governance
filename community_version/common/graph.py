@@ -77,6 +77,13 @@ def ensure_graph_schema(
     if _fulltext_index_exists(client, name):
         return
 
+    if not _fulltext_create_available(client):
+        LOGGER.info(
+            "Fulltext index creation procedure not available; skipping fulltext index setup (store=%s)",
+            client.store_label,
+        )
+        return
+
     try:
         cypher = (
             "CALL db.index.fulltext.createNodeIndex($name, ['Chunk'], ['text','explicit_terms_text'])"
@@ -128,6 +135,20 @@ def _fulltext_index_exists(client: MyNeo4j, name: str) -> bool:
         recs = client.run(
             "CALL db.indexes() YIELD name, type WHERE name = $name AND type = 'FULLTEXT' RETURN name",
             {"name": name},
+            readonly=True,
+        )
+        return bool(recs)
+    except Exception:
+        return False
+
+
+def _fulltext_create_available(client: MyNeo4j) -> bool:
+    """Return True when the fulltext create procedure is available."""
+
+    try:
+        recs = client.run(
+            "CALL dbms.procedures() YIELD name WHERE name = $name RETURN name",
+            {"name": "db.index.fulltext.createNodeIndex"},
             readonly=True,
         )
         return bool(recs)
