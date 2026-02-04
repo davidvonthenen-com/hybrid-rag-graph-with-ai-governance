@@ -70,6 +70,24 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         help="Vector batch size (paragraphs)",
     )
     parser.add_argument(
+        "--graph-chunking",
+        choices=["fixed", "paragraph"],
+        default="fixed",
+        help="Graph chunking strategy: fixed-size window (default) or paragraph-based.",
+    )
+    parser.add_argument(
+        "--graph-chunk-size",
+        type=int,
+        default=1024,
+        help="Maximum characters per graph chunk when using fixed-size chunking.",
+    )
+    parser.add_argument(
+        "--graph-chunk-overlap",
+        type=int,
+        default=256,
+        help="Character overlap between consecutive graph chunks when using fixed-size chunking.",
+    )
+    parser.add_argument(
         "--vector-chunk-size",
         type=int,
         default=1000,
@@ -185,23 +203,31 @@ class IngestStats:
 
 
 def _build_graph_chunks(
-    paragraphs: Iterable[str],
+    chunk_texts: Iterable[str],
     *,
     chunk_count: int,
 ) -> List[Dict[str, object]]:
-    """Create per-paragraph chunk payloads for graph ingestion."""
+    """Create graph chunk payloads with entity extraction.
+
+    Args:
+        chunk_texts: Iterable of chunk strings.
+        chunk_count: Total number of chunks for the document.
+
+    Returns:
+        Chunk payloads with entity metadata for graph ingestion.
+    """
 
     out: List[Dict[str, object]] = []
-    for idx, paragraph in enumerate(paragraphs):
-        para = paragraph.strip()
-        if not para:
+    for idx, chunk in enumerate(chunk_texts):
+        cleaned = chunk.strip()
+        if not cleaned:
             continue
-        ents = extract_entities(para) if para else []
+        ents = extract_entities(cleaned)
         out.append(
             {
                 "chunk_index": int(idx),
                 "chunk_count": int(chunk_count),
-                "text": para,
+                "text": cleaned,
                 "entities": ents,
                 "entities_text": " ".join(ents) if ents else "",
             }
@@ -249,6 +275,45 @@ def build_vector_chunks(
     return chunks
 
 
+def build_graph_chunk_texts(
+    paragraphs: Iterable[str],
+    *,
+    strategy: str,
+    chunk_size: int,
+    chunk_overlap: int,
+) -> List[str]:
+    """Create graph chunk text based on the selected strategy.
+
+    Args:
+        paragraphs: Paragraphs from the source document.
+        strategy: Chunking strategy ("fixed" or "paragraph").
+        chunk_size: Maximum size (in characters) of each chunk when using fixed chunking.
+        chunk_overlap: Number of characters to overlap between consecutive chunks when using fixed chunking.
+
+    Returns:
+        A list of chunk strings to ingest into the graph.
+
+    Raises:
+        ValueError: If an unsupported chunking strategy is provided.
+    """
+
+    cleaned_paragraphs = [p.strip() for p in paragraphs if p.strip()]
+    if not cleaned_paragraphs:
+        return []
+
+    if strategy == "fixed":
+        return build_vector_chunks(
+            cleaned_paragraphs,
+            chunk_size=chunk_size,
+            chunk_overlap=chunk_overlap,
+        )
+
+    if strategy == "paragraph":
+        return cleaned_paragraphs
+
+    raise ValueError(f"Unsupported graph chunking strategy: {strategy}")
+
+
 # ---------------------------------------------------------------------------
 # Ingestion logic
 # ---------------------------------------------------------------------------
@@ -290,13 +355,13 @@ def _ingest_document_to_graph(
     category: str,
     rel_path: str,
     text: str,
-    paragraphs: List[str],
+    graph_chunk_texts: List[str],
     now_ms: int,
 ) -> int:
     """Ingest a single document into Neo4j and return #chunks written."""
 
     doc_entities = extract_entities(text)
-    chunks = _build_graph_chunks(paragraphs, chunk_count=len(paragraphs))
+    chunks = _build_graph_chunks(graph_chunk_texts, chunk_count=len(graph_chunk_texts))
 
     params = {
         "store": store,
@@ -319,6 +384,9 @@ def ingest_hybrid(
     graph_store: str,
     graph_fulltext: bool,
     batch_size: int,
+    graph_chunking: str,
+    graph_chunk_size: int,
+    graph_chunk_overlap: int,
     vector_chunk_size: int,
     vector_chunk_overlap: int,
 ) -> None:
@@ -352,6 +420,12 @@ def ingest_hybrid(
             rel_path = fp.relative_to(data_dir).as_posix()
 
             paragraphs = split_into_paragraphs(text)
+            graph_chunk_texts = build_graph_chunk_texts(
+                paragraphs,
+                strategy=graph_chunking,
+                chunk_size=graph_chunk_size,
+                chunk_overlap=graph_chunk_overlap,
+            )
 
             # 1) Graph ingestion (truth grounding)
             for cli, store_key in targets:
@@ -362,7 +436,7 @@ def ingest_hybrid(
                         category=category,
                         rel_path=rel_path,
                         text=text,
-                        paragraphs=paragraphs,
+                        graph_chunk_texts=graph_chunk_texts,
                         now_ms=now_ms,
                     )
                     stats.graph_chunks += int(written)
@@ -449,6 +523,9 @@ def main(argv: Sequence[str] | None = None) -> None:
         graph_store=str(args.graph_store),
         graph_fulltext=not bool(args.no_graph_fulltext),
         batch_size=int(args.batch_size),
+        graph_chunking=str(args.graph_chunking),
+        graph_chunk_size=int(args.graph_chunk_size),
+        graph_chunk_overlap=int(args.graph_chunk_overlap),
         vector_chunk_size=int(args.vector_chunk_size),
         vector_chunk_overlap=int(args.vector_chunk_overlap),
     )
