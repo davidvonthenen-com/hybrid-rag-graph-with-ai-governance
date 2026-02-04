@@ -67,33 +67,6 @@ def ensure_graph_schema(
     for cypher in constraints:
         _run_schema(client, cypher, observability=observability)
 
-    if not create_fulltext:
-        return
-
-    # Optional fulltext index for keyword fallback.
-    # NOTE: Neo4j supports fulltext in Community, but the procedure / SHOW syntax
-    # varies slightly by version.
-    name = "chunkText"
-    if _fulltext_index_exists(client, name):
-        return
-
-    if not _fulltext_create_available(client):
-        LOGGER.info(
-            "Fulltext index creation procedure not available; skipping fulltext index setup (store=%s)",
-            client.store_label,
-        )
-        return
-
-    try:
-        cypher = (
-            "CALL db.index.fulltext.createNodeIndex($name, ['Chunk'], ['text','explicit_terms_text'])"
-        )
-        _run_schema(client, cypher, params={"name": name}, observability=observability)
-    except Exception:
-        # Not fatal. Retrieval still works via entity matches.
-        if observability:
-            print(f"[GRAPH_SCHEMA] fulltext index '{name}' not created (non-fatal)")
-
 
 def _run_schema(
     client: MyNeo4j,
@@ -116,44 +89,6 @@ def _run_schema(
             print(
                 f"[GRAPH_SCHEMA] schema operation failed (store={client.store_label}): {getattr(exc, 'message', str(exc))}"
             )
-
-
-def _fulltext_index_exists(client: MyNeo4j, name: str) -> bool:
-    # Prefer SHOW INDEXES (Neo4j 4+).
-    try:
-        recs = client.run(
-            "SHOW INDEXES YIELD name, type WHERE name = $name AND type = 'FULLTEXT' RETURN name",
-            {"name": name},
-            readonly=True,
-        )
-        return bool(recs)
-    except Exception:
-        pass
-
-    # Fallback: CALL db.indexes() for older versions.
-    try:
-        recs = client.run(
-            "CALL db.indexes() YIELD name, type WHERE name = $name AND type = 'FULLTEXT' RETURN name",
-            {"name": name},
-            readonly=True,
-        )
-        return bool(recs)
-    except Exception:
-        return False
-
-
-def _fulltext_create_available(client: MyNeo4j) -> bool:
-    """Return True when the fulltext create procedure is available."""
-
-    try:
-        recs = client.run(
-            "CALL dbms.procedures() YIELD name WHERE name = $name RETURN name",
-            {"name": "db.index.fulltext.createNodeIndex"},
-            readonly=True,
-        )
-        return bool(recs)
-    except Exception:
-        return False
 
 
 # --------------------------------------------------------------------------------------
