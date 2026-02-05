@@ -16,23 +16,33 @@ LOGGER = get_logger(__name__)
 
 
 def _resolve_base_url() -> str:
-    """Resolve the OpenAI-compatible base URL for the RAG server."""
+    """Resolve the OpenAI-compatible base URL for the RAG agent service."""
 
-    env_url = os.getenv("RAG_SERVER_URL")
+    env_url = os.getenv("RAG_AGENT_BASE_URL")
     if env_url:
         return env_url.rstrip("/")
 
-    settings = load_settings()
-    host = settings.server_host
+    host = os.getenv("RAG_AGENT_HOST")
+    port = os.getenv("RAG_AGENT_PORT")
+    if not host or not port:
+        settings = load_settings()
+        host = host or settings.server_host
+        port = port or "8002"
     if host in ("0.0.0.0", "::"):
         host = "127.0.0.1"
-    return f"http://{host}:{settings.server_port}/v1"
+    return f"http://{host}:{port}/v1"
 
 
 def _resolve_api_key() -> str:
     """Resolve the API key for the RAG server client."""
 
-    return os.getenv("RAG_SERVER_API_KEY", "local-rag")
+    return os.getenv("OPENAI_API_KEY", "local-agent")
+
+
+def _resolve_model() -> str:
+    """Resolve the model name for the request payload."""
+
+    return os.getenv("RAG_AGENT_MODEL", "local-llm")
 
 
 def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
@@ -41,6 +51,8 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Query the hybrid RAG OpenAI-compatible endpoint.")
     parser.add_argument("--question", required=True, help="Question to ask the RAG server.")
     parser.add_argument("--model", default=None, help="Override the model name in the request payload.")
+    parser.add_argument("--base-url", default=None, help="Override the API base URL for the RAG server.")
+    parser.add_argument("--api-key", default=None, help="Override the API key for the RAG server.")
     return parser.parse_args(argv)
 
 
@@ -48,16 +60,16 @@ def main(argv: Sequence[str] | None = None) -> None:
     """Send a chat completion request to the RAG server and print the answer."""
 
     args = parse_args(argv)
-    base_url = _resolve_base_url()
-    api_key = _resolve_api_key()
-    settings = load_settings()
-    model = args.model or settings.llm_server_model
+    base_url = args.base_url or _resolve_base_url()
+    api_key = args.api_key or _resolve_api_key()
+    model = args.model or _resolve_model()
 
     LOGGER.info("Sending request to %s", base_url)
     client = OpenAI(base_url=base_url, api_key=api_key)
     response = client.chat.completions.create(
         model=model,
         messages=[{"role": "user", "content": args.question}],
+        temperature=0.0,
     )
 
     content = response.choices[0].message.content if response.choices else ""
