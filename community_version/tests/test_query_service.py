@@ -38,6 +38,17 @@ def test_extract_question_from_messages_uses_last_user() -> None:
     assert question == "Second"
 
 
+def test_extract_question_from_messages_falls_back_to_last_message() -> None:
+    messages = [
+        {"role": "assistant", "content": "System note"},
+        {"role": "assistant", "content": "Last message"},
+    ]
+
+    question = query._extract_question_from_messages(messages)
+
+    assert question == "Last message"
+
+
 def test_build_request_args_overrides() -> None:
     base_args = query.parse_args([])
 

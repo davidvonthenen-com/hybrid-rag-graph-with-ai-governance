@@ -114,6 +114,8 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     # LLM knobs
     p.add_argument("--temperature", type=float, default=0.0)
     p.add_argument("--top-p", type=float, default=0.9)
+    p.add_argument("--service-host", type=str, default=None, help="Host to bind the REST service.")
+    p.add_argument("--service-port", type=int, default=None, help="Port to bind the REST service.")
 
     return p.parse_args(argv)
 
@@ -187,15 +189,17 @@ def _extract_question_from_messages(messages: List[Dict[str, str]]) -> str:
     Args:
         messages: Normalized chat messages.
     Returns:
-        The most recent user message content.
+        The most recent user message content, or the last message if no user role exists.
     Raises:
-        ValueError: When no user message is present.
+        ValueError: When no messages are present.
     """
 
+    if not messages:
+        raise ValueError("No messages provided.")
     for message in reversed(messages):
         if message.get("role") == "user":
             return message.get("content", "")
-    raise ValueError("No user message found in the request.")
+    return messages[-1].get("content", "")
 
 
 def _build_chat_response(
@@ -270,6 +274,14 @@ def _build_request_args(base_args: argparse.Namespace, payload: Dict[str, Any]) 
     if isinstance(vec_filter, str) and vec_filter in ("anchor", "none"):
         merged["vec_filter"] = vec_filter
     return argparse.Namespace(**merged)
+
+
+def _resolve_service_bindings(args: argparse.Namespace) -> Tuple[str, int]:
+    """Resolve host/port settings for the REST service."""
+
+    host = args.service_host or os.getenv("RAG_AGENT_HOST", "0.0.0.0")
+    port = args.service_port or int(os.getenv("RAG_AGENT_PORT", "8002"))
+    return host, port
 
 
 # --------------------------------------------------------------------------------------
@@ -610,13 +622,14 @@ def create_service_app(args: argparse.Namespace) -> Flask:
 
     @app.route("/health", methods=["GET"])
     def health() -> tuple[Dict[str, Any], int]:
+        host, port = _resolve_service_bindings(args)
         return jsonify(
             {
                 "status": "ok",
                 "model": settings.llm_server_model,
                 "server": {
-                    "host": os.getenv("SERVER_HOST", settings.server_host),
-                    "port": int(os.getenv("SERVER_PORT", settings.server_port)),
+                    "host": host,
+                    "port": port,
                 },
             }
         ), 200
@@ -671,9 +684,9 @@ def create_service_app(args: argparse.Namespace) -> Flask:
 def run_service(args: argparse.Namespace) -> None:
     """Run the OpenAI-compatible RAG REST service."""
 
-    settings = load_settings()
     app = create_service_app(args)
-    app.run(host=settings.server_host, port=settings.server_port, debug=False)
+    host, port = _resolve_service_bindings(args)
+    app.run(host=host, port=port, debug=False)
 
 
 def main(argv: Sequence[str] | None = None) -> None:
