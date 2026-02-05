@@ -41,6 +41,8 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Query the hybrid RAG OpenAI-compatible endpoint.")
     parser.add_argument("--question", required=True, help="Question to ask the RAG server.")
     parser.add_argument("--model", default=None, help="Override the model name in the request payload.")
+    parser.add_argument("--base-url", default=None, help="Override the API base URL for the RAG server.")
+    parser.add_argument("--api-key", default=None, help="Override the API key for the RAG server.")
     return parser.parse_args(argv)
 
 
@@ -48,8 +50,8 @@ def main(argv: Sequence[str] | None = None) -> None:
     """Send a chat completion request to the RAG server and print the answer."""
 
     args = parse_args(argv)
-    base_url = _resolve_base_url()
-    api_key = _resolve_api_key()
+    base_url = args.base_url or _resolve_base_url()
+    api_key = args.api_key or _resolve_api_key()
     settings = load_settings()
     model = args.model or settings.llm_server_model
 

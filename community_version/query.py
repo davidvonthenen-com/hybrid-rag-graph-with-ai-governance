@@ -26,13 +26,18 @@ and/or saved as JSONL (--save-results) for auditability.
 from __future__ import annotations
 
 import argparse
+import atexit
 import json
+import os
 import re
 import time
+import uuid
+from dataclasses import dataclass
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 import warnings
 
 from openai import OpenAI
+from flask import Flask, jsonify, request
 
 from common.config import load_settings
 from common.embeddings import vector_retrieve_chunks
@@ -78,6 +83,12 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         description="Hybrid RAG query (Neo4j graph grounding + vector semantic support) with full auditability."
     )
     p.add_argument("--question", help="User question to answer.")
+    p.add_argument(
+        "--service",
+        action="store_true",
+        default=False,
+        help="Start the OpenAI-compatible RAG REST API instead of running a single CLI query.",
+    )
 
     p.add_argument("--observability", action="store_true", default=False)
     p.add_argument("--save-results", type=str, default=None, help="Append JSONL records to this path.")
@@ -141,6 +152,124 @@ def _extract_citations(answer: str) -> List[str]:
         return (0 if prefix == "G" else 1, num, tag)
 
     return sorted(cites, key=_key)
+
+
+def _normalize_messages(payload: Dict[str, Any]) -> List[Dict[str, str]]:
+    """Validate and normalize chat messages from a REST request payload.
+
+    Args:
+        payload: JSON body payload.
+    Returns:
+        Normalized list of chat messages.
+    Raises:
+        ValueError: When the payload does not contain a valid messages list.
+    """
+
+    messages = payload.get("messages")
+    if not isinstance(messages, list) or not messages:
+        raise ValueError("Expected non-empty 'messages' list.")
+
+    normalized: List[Dict[str, str]] = []
+    for item in messages:
+        if not isinstance(item, dict):
+            raise ValueError("Each message must be a JSON object.")
+        role = item.get("role")
+        content = item.get("content")
+        if not isinstance(role, str) or not isinstance(content, str):
+            raise ValueError("Each message requires string 'role' and 'content'.")
+        normalized.append({"role": role, "content": content})
+    return normalized
+
+
+def _extract_question_from_messages(messages: List[Dict[str, str]]) -> str:
+    """Extract the user question from a list of chat messages.
+
+    Args:
+        messages: Normalized chat messages.
+    Returns:
+        The most recent user message content.
+    Raises:
+        ValueError: When no user message is present.
+    """
+
+    for message in reversed(messages):
+        if message.get("role") == "user":
+            return message.get("content", "")
+    raise ValueError("No user message found in the request.")
+
+
+def _build_chat_response(
+    *,
+    model: str,
+    content: str,
+) -> Dict[str, Any]:
+    """Format the OpenAI-compatible chat completion response payload."""
+
+    return {
+        "id": f"chatcmpl-{uuid.uuid4().hex}",
+        "object": "chat.completion",
+        "created": int(time.time()),
+        "model": model,
+        "choices": [
+            {
+                "index": 0,
+                "message": {"role": "assistant", "content": content},
+                "finish_reason": "stop",
+            }
+        ],
+    }
+
+
+def _error(status: int, message: str) -> tuple[Dict[str, Any], int]:
+    """Return a JSON API error payload with the OpenAI error shape."""
+
+    return {"error": {"message": message, "type": "invalid_request_error"}}, status
+
+
+def _coerce_float(value: Any, *, default: float) -> float:
+    """Safely coerce values into floats with a fallback."""
+
+    if value is None:
+        return default
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return default
+
+
+def _coerce_int(value: Any, *, default: Optional[int]) -> Optional[int]:
+    """Safely coerce values into integers with a fallback."""
+
+    if value is None:
+        return default
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return default
+
+
+def _build_request_args(base_args: argparse.Namespace, payload: Dict[str, Any]) -> argparse.Namespace:
+    """Merge per-request overrides into the base CLI args.
+
+    Args:
+        base_args: Arguments provided when the service started.
+        payload: JSON body containing optional overrides.
+    Returns:
+        A new argparse.Namespace with merged values.
+    """
+
+    merged = vars(base_args).copy()
+    merged["temperature"] = _coerce_float(payload.get("temperature"), default=float(base_args.temperature))
+    merged["top_p"] = _coerce_float(payload.get("top_p"), default=float(base_args.top_p))
+    merged["top_k"] = _coerce_int(payload.get("top_k"), default=int(base_args.top_k))
+    merged["graph_k"] = _coerce_int(payload.get("graph_k"), default=base_args.graph_k)
+    merged["vec_k"] = _coerce_int(payload.get("vec_k"), default=base_args.vec_k)
+    merged["graph_doc_k"] = _coerce_int(payload.get("graph_doc_k"), default=int(base_args.graph_doc_k))
+    merged["neighbor_window"] = _coerce_int(payload.get("neighbor_window"), default=int(base_args.neighbor_window))
+    vec_filter = payload.get("vec_filter")
+    if isinstance(vec_filter, str) and vec_filter in ("anchor", "none"):
+        merged["vec_filter"] = vec_filter
+    return argparse.Namespace(**merged)
 
 
 # --------------------------------------------------------------------------------------
@@ -439,8 +568,120 @@ def run_queries(questions: List[str], *, args: argparse.Namespace) -> None:
     graph_long.close()
 
 
+@dataclass
+class ServiceResources:
+    """Runtime dependencies needed to answer RAG service requests."""
+
+    graph_hot: MyNeo4j
+    graph_long: MyNeo4j
+    vec_client: Any
+    llm: OpenAI
+
+    def close(self) -> None:
+        """Close any open resources."""
+
+        self.graph_hot.close()
+        self.graph_long.close()
+
+
+def _init_service_resources() -> ServiceResources:
+    """Initialize shared service dependencies for request handling."""
+
+    graph_hot = create_graph_hot_client()
+    graph_long = create_graph_long_client()
+    vec_client, _ = create_vector_client()
+    llm = load_llm()
+    return ServiceResources(
+        graph_hot=graph_hot,
+        graph_long=graph_long,
+        vec_client=vec_client,
+        llm=llm,
+    )
+
+
+def create_service_app(args: argparse.Namespace) -> Flask:
+    """Create the Flask app that serves the OpenAI-compatible RAG endpoint."""
+
+    app = Flask(__name__)
+    settings = load_settings()
+    resources = _init_service_resources()
+    app.config["RAG_RESOURCES"] = resources
+    atexit.register(resources.close)
+
+    @app.route("/health", methods=["GET"])
+    def health() -> tuple[Dict[str, Any], int]:
+        return jsonify(
+            {
+                "status": "ok",
+                "model": settings.llm_server_model,
+                "server": {
+                    "host": os.getenv("SERVER_HOST", settings.server_host),
+                    "port": int(os.getenv("SERVER_PORT", settings.server_port)),
+                },
+            }
+        ), 200
+
+    @app.route("/v1/models", methods=["GET"])
+    def models() -> tuple[Dict[str, Any], int]:
+        return jsonify(
+            {
+                "object": "list",
+                "data": [
+                    {
+                        "id": settings.llm_server_model,
+                        "object": "model",
+                        "created": int(time.time()),
+                        "owned_by": "local",
+                    }
+                ],
+            }
+        ), 200
+
+    @app.route("/v1/chat/completions", methods=["POST"])
+    def chat_completions() -> tuple[Dict[str, Any], int]:
+        payload = request.get_json(silent=True)
+        if not isinstance(payload, dict):
+            return _error(400, "Expected JSON object payload.")
+
+        if payload.get("stream") is True:
+            return _error(400, "Streaming responses are not supported.")
+
+        try:
+            messages = _normalize_messages(payload)
+            question = _extract_question_from_messages(messages)
+        except ValueError as exc:
+            return _error(400, str(exc))
+
+        request_args = _build_request_args(args, payload)
+        model = str(payload.get("model") or settings.llm_server_model)
+
+        answer, _audit = run_one(
+            question,
+            graph_hot=resources.graph_hot,
+            graph_long=resources.graph_long,
+            vec_client=resources.vec_client,
+            llm=resources.llm,
+            args=request_args,
+        )
+        return jsonify(_build_chat_response(model=model, content=answer)), 200
+
+    return app
+
+
+def run_service(args: argparse.Namespace) -> None:
+    """Run the OpenAI-compatible RAG REST service."""
+
+    settings = load_settings()
+    app = create_service_app(args)
+    app.run(host=settings.server_host, port=settings.server_port, debug=False)
+
+
 def main(argv: Sequence[str] | None = None) -> None:
     args = parse_args(argv)
+
+    if args.service:
+        run_service(args)
+        return
 
     questions: List[str]
     if args.question:
